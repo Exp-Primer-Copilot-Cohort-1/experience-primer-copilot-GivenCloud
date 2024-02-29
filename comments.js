@@ -1,78 +1,56 @@
-//Create a new server
-var app = require('http').createServer(handler)
-var io = require('socket.io')(app);
-var fs = require('fs');
-var url = require('url');
-var path = require('path');
-var mime = require('mime');
-var bodyParser = require('body-parser');
-var mysql = require('mysql');
-var express = require('express');
-var app = express();
+//Create a new server side route to handle the new comment form submission.
+//This route will be responsible for adding a new comment to the database.
+//The form data will be sent as a POST request to the server.
+//The server will then add the new comment to the database and return the updated list of comments.
+//The updated list of comments will be sent back to the client and displayed on the page.
 
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({extended: false}));
+const express = require('express');
+const router = express.Router();
+const Comment = require('../models/comment');
+const Post = require('../models/post');
+const User = require('../models/user');
+const { body, validationResult } = require('express-validator');
 
-//Create a connection to the database
-var connection = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: '',
-    database: 'comments'
+// GET request to display the new comment form
+router.get('/new', (req, res) => {
+  res.render('comments/new');
 });
 
-//Connect to the database
-connection.connect(function(err){
-    if(err){
-        console.log('Error connecting to Db');
-        return;
+// POST request to handle the new comment form submission
+router.post(
+  '/',
+  // Validate and sanitize the fields
+  body('text')
+    .trim()
+    .isLength({ min: 1 })
+    .withMessage('Comment must not be empty')
+    .escape(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.render('comments/new', { errors: errors.array() });
+    } else {
+      try {
+        // Create a new comment
+        const comment = new Comment({
+          text: req.body.text,
+          timestamp: new Date(),
+          user: req.user._id,
+        });
+        // Save the new comment to the database
+        await comment.save();
+        // Add the new comment to the post
+        const post = await Post.findById(req.body.postId);
+        post.comments.push(comment);
+        await post.save();
+        // Redirect to the post detail page
+        res.redirect(`/posts/${req.body.postId}`);
+      } catch (err) {
+        console.error(err);
+        res.send('Error adding comment');
+      }
     }
-    console.log('Connection established');
-});
+  }
+);
 
-app.use(express.static(path.join(__dirname, 'public')));
-
-//Handle requests
-app.get('/', function(req, res){
-    res.sendFile(__dirname + '/index.html');
-});
-
-app.get('/comments', function(req, res){
-    connection.query('SELECT * FROM comments', function(err, rows){
-        if(err) throw err;
-        res.json(rows);
-    });
-});
-
-app.post('/comments', function(req, res){
-    connection.query('INSERT INTO comments (author, text) VALUES (?, ?)', [req.body.author, req.body.text], function(err, result){
-        if(err) throw err;
-        res.json({id: result.insertId, author: req.body.author, text: req.body.text});
-    });
-});
-
-app.get('/comments/:id', function(req, res){
-    connection.query('SELECT * FROM comments WHERE id = ?', [req.params.id], function(err, rows){
-        if(err) throw err;
-        res.json(rows);
-    });
-});
-
-app.put('/comments/:id', function(req, res){
-    connection.query('UPDATE comments SET text = ? WHERE id = ?', [req.body.text, req.params.id], function(err, result){
-        if(err) throw err;
-        res.json({id: req.params.id, text: req.body.text});
-    });
-});
-
-app.delete('/comments/:id', function(req, res){
-    connection.query('DELETE FROM comments WHERE id = ?', [req.params.id], function(err, result){
-        if(err) throw err;
-        res.json({id: req.params.id});
-    });
-});
-
-//Listen on port 3000
-app.listen(3000, function(){
-    console.log('Listening on port 3000');
-});
+module.exports = router;
